@@ -32,94 +32,110 @@ jobs:
 
       - name: Auto-Fix Android Configuration & Dependencies
         run: |
-          echo "=== 1. Auto-healing telecom_service.dart ==="
-          python3 -c "
-          import os
-          telecom_file = 'flutter_app/lib/services/telecom_service.dart'
-          if os.path.exists(telecom_file):
-              with open(telecom_file, 'r') as f:
-                  code = f.read()
-              code = code.replace(\"import 'package:call_log/call_log.dart';\", \"import 'package:call_log/call_log.dart' as cl;\")
-              code = code.replace(\"CallLog.query\", \"cl.CallLog.query\")
-              code = code.replace(\"CallLogEntry\", \"cl.CallLogEntry\")
-              code = code.replace(\"CallType.INCOMING\", \"cl.CallType.INCOMING\")
-              code = code.replace(\"CallType.OUTGOING\", \"cl.CallType.OUTGOING\")
-              code = code.replace(\"CallType.MISSED\", \"cl.CallType.MISSED\")
-              code = code.replace(\"CallType.REJECTED\", \"cl.CallType.REJECTED\")
-              code = code.replace(\"CallType.BLOCKED\", \"cl.CallType.BLOCKED\")
-              with open(telecom_file, 'w') as f:
-                  f.write(code)
-              print('telecom_service.dart patched')
-          "
+          python3 - << 'EOF'
+          import os, sys, re, struct, zlib
 
-          echo "=== 2. Auto-healing pubspec.yaml for Gradle 8 AGP compatibility ==="
-          python3 -c "
-          import os, re
-          pubspec_file = 'flutter_app/pubspec.yaml'
+          base_dir = 'flutter_app' if os.path.exists('flutter_app/pubspec.yaml') else '.'
+          print(f"Base Flutter Directory detected: {base_dir}")
+
+          # 1. Auto-patch telecom_service.dart CallType collision
+          telecom_file = f'{base_dir}/lib/services/telecom_service.dart'
+          if os.path.exists(telecom_file):
+              with open(telecom_file, 'r', encoding='utf-8') as f:
+                  code = f.read()
+              code = code.replace("import 'package:call_log/call_log.dart';", "import 'package:call_log/call_log.dart' as cl;")
+              code = code.replace("CallLog.query", "cl.CallLog.query")
+              code = code.replace("CallLogEntry", "cl.CallLogEntry")
+              code = code.replace("CallType.INCOMING", "cl.CallType.INCOMING")
+              code = code.replace("CallType.OUTGOING", "cl.CallType.OUTGOING")
+              code = code.replace("CallType.MISSED", "cl.CallType.MISSED")
+              code = code.replace("CallType.REJECTED", "cl.CallType.REJECTED")
+              code = code.replace("CallType.BLOCKED", "cl.CallType.BLOCKED")
+              with open(telecom_file, 'w', encoding='utf-8') as f:
+                  f.write(code)
+              print("✔ telecom_service.dart successfully patched")
+
+          # 2. Auto-patch pubspec.yaml for Gradle 8 AGP compatibility
+          pubspec_file = f'{base_dir}/pubspec.yaml'
           if os.path.exists(pubspec_file):
-              with open(pubspec_file, 'r') as f:
+              with open(pubspec_file, 'r', encoding='utf-8') as f:
                   code = f.read()
               code = re.sub(r'flutter_phone_direct_caller:.*', 'flutter_phone_direct_caller: ^2.2.0', code)
               code = re.sub(r'call_log:.*', 'call_log: ^6.0.0', code)
-              with open(pubspec_file, 'w') as f:
+              with open(pubspec_file, 'w', encoding='utf-8') as f:
                   f.write(code)
-              print('pubspec.yaml patched')
-          "
+              print("✔ pubspec.yaml patched")
 
-          echo "=== 3. Auto-healing Android Gradle namespace fallback ==="
-          python3 -c "
-          import os
-          root_gradle = 'flutter_app/android/build.gradle'
+          # 3. Auto-patch root build.gradle for namespace fallback
+          root_gradle = f'{base_dir}/android/build.gradle'
           if os.path.exists(root_gradle):
-              with open(root_gradle, 'r') as f:
+              with open(root_gradle, 'r', encoding='utf-8') as f:
                   code = f.read()
               fallback = '''
-          subprojects {
-              afterEvaluate { project ->
-                  if (project.hasProperty('android')) {
-                      if (project.android.namespace == null) {
-                          project.android.namespace = project.group ?: \"com.plugin.${project.name.replace('-', '_')}\"
-                      }
-                  }
-              }
-          }
-          '''
+subprojects {
+    afterEvaluate { project ->
+        if (project.hasProperty('android')) {
+            if (project.android.namespace == null) {
+                project.android.namespace = project.group ?: ("com.plugin." + project.name.replace('-', '_'))
+            }
+        }
+    }
+}
+'''
               if 'afterEvaluate' not in code:
                   code += '\n' + fallback
-                  with open(root_gradle, 'w') as f:
+                  with open(root_gradle, 'w', encoding='utf-8') as f:
                       f.write(code)
-                  print('Namespace fallback added')
-          "
+                  print("✔ Namespace fallback added to android/build.gradle")
 
-          echo "=== 4. Ensure Android res directories and launcher icons ==="
-          python3 -c "
-          import os, struct, zlib
-          res_dir = 'flutter_app/android/app/src/main/res'
+          # 4. Patch app/build.gradle minSdk to 26
+          app_gradle = f'{base_dir}/android/app/build.gradle'
+          if os.path.exists(app_gradle):
+              with open(app_gradle, 'r', encoding='utf-8') as f:
+                  code = f.read()
+              code = re.sub(r'minSdkVersion\s+.*', 'minSdkVersion 26', code)
+              code = re.sub(r'minSdk\s+.*', 'minSdk 26', code)
+              code = code.replace('flutter.minSdkVersion', '26')
+              with open(app_gradle, 'w', encoding='utf-8') as f:
+                  f.write(code)
+              print("✔ minSdk set to 26 in app/build.gradle")
+
+          # 5. Patch app/build.gradle.kts minSdk if kotlin DSL
+          app_gradle_kts = f'{base_dir}/android/app/build.gradle.kts'
+          if os.path.exists(app_gradle_kts):
+              with open(app_gradle_kts, 'r', encoding='utf-8') as f:
+                  code = f.read()
+              code = re.sub(r'minSdk\s*=\s*.*', 'minSdk = 26', code)
+              with open(app_gradle_kts, 'w', encoding='utf-8') as f:
+                  f.write(code)
+
+          # 6. Ensure res directories & launcher icons
+          res_dir = f'{base_dir}/android/app/src/main/res'
           os.makedirs(f'{res_dir}/values', exist_ok=True)
           os.makedirs(f'{res_dir}/values-night', exist_ok=True)
           os.makedirs(f'{res_dir}/drawable', exist_ok=True)
 
-          styles_xml = '''<?xml version=\"1.0\" encoding=\"utf-8\"?>
-          <resources>
-              <style name=\"LaunchTheme\" parent=\"@android:style/Theme.Light.NoTitleBar\">
-                  <item name=\"android:windowBackground\">@drawable/launch_background</item>
-              </style>
-              <style name=\"NormalTheme\" parent=\"@android:style/Theme.Light.NoTitleBar\">
-                  <item name=\"android:windowBackground\">?android:colorBackground</item>
-              </style>
-          </resources>
-          '''
-          with open(f'{res_dir}/values/styles.xml', 'w') as f:
+          styles_xml = '''<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="LaunchTheme" parent="@android:style/Theme.Light.NoTitleBar">
+        <item name="android:windowBackground">@drawable/launch_background</item>
+    </style>
+    <style name="NormalTheme" parent="@android:style/Theme.Light.NoTitleBar">
+        <item name="android:windowBackground">?android:colorBackground</item>
+    </style>
+</resources>
+'''
+          with open(f'{res_dir}/values/styles.xml', 'w', encoding='utf-8') as f:
               f.write(styles_xml)
-          with open(f'{res_dir}/values-night/styles.xml', 'w') as f:
+          with open(f'{res_dir}/values-night/styles.xml', 'w', encoding='utf-8') as f:
               f.write(styles_xml)
 
-          launch_bg = '''<?xml version=\"1.0\" encoding=\"utf-8\"?>
-          <layer-list xmlns:android=\"http://schemas.android.com/apk/res/android\">
-              <item android:drawable=\"@android:color/black\" />
-          </layer-list>
-          '''
-          with open(f'{res_dir}/drawable/launch_background.xml', 'w') as f:
+          launch_bg = '''<?xml version="1.0" encoding="utf-8"?>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@android:color/black" />
+</layer-list>
+'''
+          with open(f'{res_dir}/drawable/launch_background.xml', 'w', encoding='utf-8') as f:
               f.write(launch_bg)
 
           def make_png(filename, r=16, g=185, b=129):
@@ -139,21 +155,33 @@ jobs:
               os.makedirs(folder, exist_ok=True)
               make_png(f'{folder}/ic_launcher.png')
 
-          print('Android res/ files verified successfully')
-          "
-
-      - name: Install Flutter Dependencies
-        working-directory: ./flutter_app
-        run: flutter pub get
+          print("✔ Android res/ files and icons verified successfully")
+          EOF
 
       - name: Build Android Release APK
-        working-directory: ./flutter_app
-        run: flutter build apk --release
+        run: |
+          TARGET_DIR="."
+          if [ -d "flutter_app" ]; then
+            TARGET_DIR="flutter_app"
+          fi
+          cd "$TARGET_DIR"
+          echo "Building in $(pwd)..."
+          flutter pub get
+          flutter build apk --release
 
       - name: Prepare Clean Release File
         run: |
           mkdir -p release_out
-          cp flutter_app/build/app/outputs/flutter-apk/app-release.apk release_out/StackDialer.apk
+          APK_PATH=$(find . -name "app-release.apk" -o -name "*release*.apk" | head -n 1)
+          if [ -n "$APK_PATH" ]; then
+            cp "$APK_PATH" release_out/StackDialer.apk
+            echo "Successfully found APK: $APK_PATH"
+            ls -lh release_out/StackDialer.apk
+          else
+            echo "ERROR: Could not find built APK!"
+            find . -name "*.apk"
+            exit 1
+          fi
 
       - name: Upload APK as Workflow Artifact
         uses: actions/upload-artifact@v4
@@ -164,7 +192,7 @@ jobs:
 
       - name: Publish Direct APK to GitHub Releases
         uses: softprops/action-gh-release@v2
-        if: startsWith(github.ref, 'refs/heads/main') || startsWith(github.ref, 'refs/heads/master')
+        if: success()
         with:
           tag_name: v1.0.0-apk
           name: StackDialer Native Android v1.0
@@ -173,6 +201,7 @@ jobs:
             - Real SIM Calling & Telecom Service
             - 3D Stacked Recent Calls & T9 Search
             - Contacts & Call Logs integration
+            - Direct Installable APK
           files: release_out/StackDialer.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
