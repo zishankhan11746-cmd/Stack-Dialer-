@@ -60,8 +60,3 @@ android {
 flutter {
     source '../..'
 }
-
-repositories {
-    google()
-    mavenCentral()
-}
