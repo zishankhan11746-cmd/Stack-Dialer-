@@ -22,9 +22,64 @@ jobs:
       - name: Setup Flutter SDK
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.22.2'
+          flutter-version: '3.24.4'
           channel: 'stable'
           cache: true
+
+      - name: Fix Android Gradle Shell & Permissions
+        run: |
+          cd flutter_app
+          # Purana broken android folder delete karke official clean shell banayega
+          rm -rf android
+          flutter create -t app --org com.stackdialer --project-name stack_dialer --platforms android .
+          
+          # Real SIM calling aur Default Dialer permissions inject karega
+          python3 -c "
+          manifest_path = 'android/app/src/main/AndroidManifest.xml'
+          with open(manifest_path, 'r') as f:
+              content = f.read()
+          
+          permissions = '''
+              <uses-permission android:name=\"android.permission.CALL_PHONE\" />
+              <uses-permission android:name=\"android.permission.READ_PHONE_STATE\" />
+              <uses-permission android:name=\"android.permission.READ_CALL_LOG\" />
+              <uses-permission android:name=\"android.permission.WRITE_CALL_LOG\" />
+              <uses-permission android:name=\"android.permission.READ_CONTACTS\" />
+              <uses-permission android:name=\"android.permission.WRITE_CONTACTS\" />
+              <uses-permission android:name=\"android.permission.MANAGE_OWN_CALLS\" />
+          '''
+          
+          if '<uses-permission' not in content:
+              content = content.replace('<application', permissions + '\n    <application')
+          
+          dial_intent = '''
+                      <intent-filter>
+                          <action android:name=\"android.intent.action.DIAL\" />
+                          <category android:name=\"android.intent.category.DEFAULT\" />
+                      </intent-filter>
+                      <intent-filter>
+                          <action android:name=\"android.intent.action.DIAL\" />
+                          <category android:name=\"android.intent.category.DEFAULT\" />
+                          <data android:scheme=\"tel\" />
+                      </intent-filter>
+          '''
+          if 'android.intent.action.DIAL' not in content:
+              content = content.replace('</activity>', dial_intent + '\n        </activity>')
+          
+          with open(manifest_path, 'w') as f:
+              f.write(content)
+          print('Successfully configured AndroidManifest.xml')
+          "
+          
+          # Telephony APIs ke liye minSdk 26 set karega
+          if [ -f android/app/build.gradle ]; then
+            sed -i 's/minSdkVersion = .*/minSdkVersion = 26/' android/app/build.gradle || true
+            sed -i 's/minSdk = .*/minSdk = 26/' android/app/build.gradle || true
+            sed -i 's/flutter.minSdkVersion/26/' android/app/build.gradle || true
+          fi
+          if [ -f android/app/build.gradle.kts ]; then
+            sed -i 's/minSdk = .*/minSdk = 26/' android/app/build.gradle.kts || true
+          fi
 
       - name: Install Dependencies
         working-directory: ./flutter_app
