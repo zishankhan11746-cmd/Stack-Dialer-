@@ -1,0 +1,1 @@
+cd flutter_app && flutter build apk --release
