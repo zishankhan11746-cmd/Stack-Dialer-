@@ -1,0 +1,33 @@
+name: stack_dialer
+description: "StackDialer - Real Native Android Dialer with 3D Stacked Recent Calls, T9 Search, Live SIM Calling, and Default Dialer Support"
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.2.0 <4.0.0'
+  flutter: ">=3.16.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Real Native Android Telecom & Calling
+  flutter_phone_direct_caller: ^2.1.1 # Direct carrier calling from SIM
+  url_launcher: ^6.3.1               # Tel URI intent fallback
+  call_log: ^5.0.2                   # Real Android device call log history
+  flutter_contacts: ^1.1.9+2         # Real Android device contacts read & write
+  permission_handler: ^11.3.1        # Runtime permissions: CALL_PHONE, READ_CALL_LOG, READ_CONTACTS
+
+  # Audio & UI Enhancements
+  audioplayers: ^6.1.0               # DTMF dial tones and UI audio
+  google_fonts: ^6.2.1               # Plus Jakarta Sans and JetBrains Mono fonts
+  cupertino_icons: ^1.0.8
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/
