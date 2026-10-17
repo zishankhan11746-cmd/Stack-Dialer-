@@ -5,15 +5,19 @@ on:
     branches: [ main, master ]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
+    name: Build Native Android APK
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Code
+      - name: Checkout Repository Code
         uses: actions/checkout@v4
 
-      - name: Setup Java JDK
+      - name: Setup Java JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
@@ -26,62 +30,119 @@ jobs:
           channel: 'stable'
           cache: true
 
-      - name: Fix Android Gradle Shell & Permissions
+      - name: Auto-Fix Android Configuration & Dependencies
         run: |
-          cd flutter_app
-          # Purana broken android folder delete karke official clean shell banayega
-          rm -rf android
-          flutter create -t app --org com.stackdialer --project-name stack_dialer --platforms android .
-          
-          # Real SIM calling aur Default Dialer permissions inject karega
+          echo "=== 1. Auto-healing telecom_service.dart ==="
           python3 -c "
-          manifest_path = 'android/app/src/main/AndroidManifest.xml'
-          with open(manifest_path, 'r') as f:
-              content = f.read()
-          
-          permissions = '''
-              <uses-permission android:name=\"android.permission.CALL_PHONE\" />
-              <uses-permission android:name=\"android.permission.READ_PHONE_STATE\" />
-              <uses-permission android:name=\"android.permission.READ_CALL_LOG\" />
-              <uses-permission android:name=\"android.permission.WRITE_CALL_LOG\" />
-              <uses-permission android:name=\"android.permission.READ_CONTACTS\" />
-              <uses-permission android:name=\"android.permission.WRITE_CONTACTS\" />
-              <uses-permission android:name=\"android.permission.MANAGE_OWN_CALLS\" />
-          '''
-          
-          if '<uses-permission' not in content:
-              content = content.replace('<application', permissions + '\n    <application')
-          
-          dial_intent = '''
-                      <intent-filter>
-                          <action android:name=\"android.intent.action.DIAL\" />
-                          <category android:name=\"android.intent.category.DEFAULT\" />
-                      </intent-filter>
-                      <intent-filter>
-                          <action android:name=\"android.intent.action.DIAL\" />
-                          <category android:name=\"android.intent.category.DEFAULT\" />
-                          <data android:scheme=\"tel\" />
-                      </intent-filter>
-          '''
-          if 'android.intent.action.DIAL' not in content:
-              content = content.replace('</activity>', dial_intent + '\n        </activity>')
-          
-          with open(manifest_path, 'w') as f:
-              f.write(content)
-          print('Successfully configured AndroidManifest.xml')
+          import os
+          telecom_file = 'flutter_app/lib/services/telecom_service.dart'
+          if os.path.exists(telecom_file):
+              with open(telecom_file, 'r') as f:
+                  code = f.read()
+              code = code.replace(\"import 'package:call_log/call_log.dart';\", \"import 'package:call_log/call_log.dart' as cl;\")
+              code = code.replace(\"CallLog.query\", \"cl.CallLog.query\")
+              code = code.replace(\"CallLogEntry\", \"cl.CallLogEntry\")
+              code = code.replace(\"CallType.INCOMING\", \"cl.CallType.INCOMING\")
+              code = code.replace(\"CallType.OUTGOING\", \"cl.CallType.OUTGOING\")
+              code = code.replace(\"CallType.MISSED\", \"cl.CallType.MISSED\")
+              code = code.replace(\"CallType.REJECTED\", \"cl.CallType.REJECTED\")
+              code = code.replace(\"CallType.BLOCKED\", \"cl.CallType.BLOCKED\")
+              with open(telecom_file, 'w') as f:
+                  f.write(code)
+              print('telecom_service.dart patched')
           "
-          
-          # Telephony APIs ke liye minSdk 26 set karega
-          if [ -f android/app/build.gradle ]; then
-            sed -i 's/minSdkVersion = .*/minSdkVersion = 26/' android/app/build.gradle || true
-            sed -i 's/minSdk = .*/minSdk = 26/' android/app/build.gradle || true
-            sed -i 's/flutter.minSdkVersion/26/' android/app/build.gradle || true
-          fi
-          if [ -f android/app/build.gradle.kts ]; then
-            sed -i 's/minSdk = .*/minSdk = 26/' android/app/build.gradle.kts || true
-          fi
 
-      - name: Install Dependencies
+          echo "=== 2. Auto-healing pubspec.yaml for Gradle 8 AGP compatibility ==="
+          python3 -c "
+          import os, re
+          pubspec_file = 'flutter_app/pubspec.yaml'
+          if os.path.exists(pubspec_file):
+              with open(pubspec_file, 'r') as f:
+                  code = f.read()
+              code = re.sub(r'flutter_phone_direct_caller:.*', 'flutter_phone_direct_caller: ^2.2.0', code)
+              code = re.sub(r'call_log:.*', 'call_log: ^6.0.0', code)
+              with open(pubspec_file, 'w') as f:
+                  f.write(code)
+              print('pubspec.yaml patched')
+          "
+
+          echo "=== 3. Auto-healing Android Gradle namespace fallback ==="
+          python3 -c "
+          import os
+          root_gradle = 'flutter_app/android/build.gradle'
+          if os.path.exists(root_gradle):
+              with open(root_gradle, 'r') as f:
+                  code = f.read()
+              fallback = '''
+          subprojects {
+              afterEvaluate { project ->
+                  if (project.hasProperty('android')) {
+                      if (project.android.namespace == null) {
+                          project.android.namespace = project.group ?: \"com.plugin.${project.name.replace('-', '_')}\"
+                      }
+                  }
+              }
+          }
+          '''
+              if 'afterEvaluate' not in code:
+                  code += '\n' + fallback
+                  with open(root_gradle, 'w') as f:
+                      f.write(code)
+                  print('Namespace fallback added')
+          "
+
+          echo "=== 4. Ensure Android res directories and launcher icons ==="
+          python3 -c "
+          import os, struct, zlib
+          res_dir = 'flutter_app/android/app/src/main/res'
+          os.makedirs(f'{res_dir}/values', exist_ok=True)
+          os.makedirs(f'{res_dir}/values-night', exist_ok=True)
+          os.makedirs(f'{res_dir}/drawable', exist_ok=True)
+
+          styles_xml = '''<?xml version=\"1.0\" encoding=\"utf-8\"?>
+          <resources>
+              <style name=\"LaunchTheme\" parent=\"@android:style/Theme.Light.NoTitleBar\">
+                  <item name=\"android:windowBackground\">@drawable/launch_background</item>
+              </style>
+              <style name=\"NormalTheme\" parent=\"@android:style/Theme.Light.NoTitleBar\">
+                  <item name=\"android:windowBackground\">?android:colorBackground</item>
+              </style>
+          </resources>
+          '''
+          with open(f'{res_dir}/values/styles.xml', 'w') as f:
+              f.write(styles_xml)
+          with open(f'{res_dir}/values-night/styles.xml', 'w') as f:
+              f.write(styles_xml)
+
+          launch_bg = '''<?xml version=\"1.0\" encoding=\"utf-8\"?>
+          <layer-list xmlns:android=\"http://schemas.android.com/apk/res/android\">
+              <item android:drawable=\"@android:color/black\" />
+          </layer-list>
+          '''
+          with open(f'{res_dir}/drawable/launch_background.xml', 'w') as f:
+              f.write(launch_bg)
+
+          def make_png(filename, r=16, g=185, b=129):
+              raw = b'\x00' + bytes([r, g, b, 255])
+              ihdr = struct.pack('>IIBBBBB', 1, 1, 8, 6, 0, 0, 0)
+              png = b'\x89PNG\r\n\x1a\n'
+              def chunk(tag, data):
+                  return struct.pack('>I', len(data)) + tag + data + struct.pack('>I', zlib.crc32(tag + data) & 0xffffffff)
+              png += chunk(b'IHDR', ihdr)
+              png += chunk(b'IDAT', zlib.compress(raw))
+              png += chunk(b'IEND', b'')
+              with open(filename, 'wb') as f:
+                  f.write(png)
+
+          for density in ['mdpi', 'hdpi', 'xhdpi', 'xxhdpi', 'xxxhdpi']:
+              folder = f'{res_dir}/mipmap-{density}'
+              os.makedirs(folder, exist_ok=True)
+              make_png(f'{folder}/ic_launcher.png')
+
+          print('Android res/ files verified successfully')
+          "
+
+      - name: Install Flutter Dependencies
         working-directory: ./flutter_app
         run: flutter pub get
 
@@ -89,9 +150,29 @@ jobs:
         working-directory: ./flutter_app
         run: flutter build apk --release
 
-      - name: Upload APK Artifact
+      - name: Prepare Clean Release File
+        run: |
+          mkdir -p release_out
+          cp flutter_app/build/app/outputs/flutter-apk/app-release.apk release_out/StackDialer.apk
+
+      - name: Upload APK as Workflow Artifact
         uses: actions/upload-artifact@v4
         with:
           name: StackDialer-Release-APK
-          path: flutter_app/build/app/outputs/flutter-apk/app-release.apk
+          path: release_out/StackDialer.apk
           if-no-files-found: error
+
+      - name: Publish Direct APK to GitHub Releases
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/heads/main') || startsWith(github.ref, 'refs/heads/master')
+        with:
+          tag_name: v1.0.0-apk
+          name: StackDialer Native Android v1.0
+          body: |
+            ### 🚀 StackDialer Native Android Release APK
+            - Real SIM Calling & Telecom Service
+            - 3D Stacked Recent Calls & T9 Search
+            - Contacts & Call Logs integration
+          files: release_out/StackDialer.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
